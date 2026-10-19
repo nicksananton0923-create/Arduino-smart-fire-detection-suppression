@@ -1,0 +1,37 @@
+# GitHub Setup Guide
+
+## Suggested Repository Name
+`arduino-smart-fire-detection-suppression`
+
+## Short Description (About box)
+Educational Arduino fire-detection prototype with flame and MQ-2 sensing, filtering, latched alarm, buzzer/LED warnings, and a simulated suppression output. Not a certified fire alarm.
+
+## Topics
+`arduino` `arduino-uno` `fire-detection` `fire-alarm` `flame-sensor` `mq2` `embedded-systems` `iot` `electronics` `student-project` `state-machine` `safety-systems`
+
+## Upload Steps
+1. Create a new empty repository on GitHub (no README, since this ZIP already contains one).
+2. Extract the ZIP on your computer.
+3. In the extracted folder run:
+```bash
+git init
+git add .
+git commit -m "Initial commit: educational Arduino fire detection prototype"
+git branch -M main
+git remote add origin https://github.com/<your-username>/arduino-smart-fire-detection-suppression.git
+git push -u origin main
+```
+Or use the GitHub web UI: **Add file → Upload files** and drag the extracted contents.
+
+## Photographs to Capture (only real photos of your build)
+1. Full circuit from above with all components visible.
+2. Close-up of Arduino wiring.
+3. Close-up of flame sensor and MQ-2 mounting.
+4. Normal state (green LED on).
+5. Pre-alarm state (red blinking).
+6. Alarm state with simulated suppression LED on.
+7. Serial Monitor screenshot with diagnostics.
+8. Fault state demonstration.
+9. Hand-drawn or digital wiring diagram next to the real circuit.
+
+Save images in an `images/` folder and reference them from the README.
