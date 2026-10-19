@@ -1,0 +1,29 @@
+# Troubleshooting Guide
+
+| Symptom | Likely cause | What to check / do |
+|---|---|---|
+| No serial output | Wrong port/baud, board not detected | Select correct board and port; set Serial Monitor to 9600 baud; try another USB cable |
+| Sketch will not compile | Missing library or wrong flag | Default build needs no libraries. If `USE_LCD 1`, install **LiquidCrystal I2C** via Library Manager |
+| Sketch is in a wrong folder | Arduino IDE needs folder name to match the `.ino` | Keep `smart_fire_detection/smart_fire_detection.ino` together |
+| Green LED never lights | LED reversed, wrong pin, missing resistor path to GND | Long leg (anode) toward resistor/D4; cathode to GND |
+| Buzzer always on | Transistor wired wrong, or buzzer is a passive type | Check collector/emitter orientation; confirm "active" buzzer |
+| Buzzer silent | Reversed polarity, base resistor missing, buzzer is passive | Check + to 5V and − to collector; confirm D8 reaches the base through 1 kΩ |
+| Flame never triggers | Polarity setting wrong, threshold too low, sensor facing wrong way | Read raw values in Serial; set `FLAME_ACTIVE_LOW` correctly; adjust `FLAME_THRESHOLD`; check module trim pot |
+| Flame always triggers | Threshold too high, strong ambient IR/sunlight | Lower threshold; shield sensor from sunlight and incandescent lamps |
+| MQ-2 reads very high at start | Sensor not warmed up, or sensor exposed to vapors | Allow longer preheat (several minutes; ideally hours on first use); ventilate area |
+| Smoke alarm never triggers | Delta too large, baseline wrong | Check printed baseline; reduce `SMOKE_DELTA_COUNTS`; confirm AO (not DO) is wired to A1 |
+| Constant FAULT state | MQ-2 reading ≤ 5 or ≥ 1018 | Check wiring, VCC, GND; measure AO with a multimeter; adjust limits only after confirming the sensor is healthy |
+| Random false alarms | Noise, loose jumpers, weak supply, sunlight, aerosols | Use short wires, common ground, stable supply; raise `CONFIRM_MS`; increase `FILTER_SIZE`; re-calibrate |
+| Readings jump around | Floating analog pin or shared ground issue | Ensure sensor GND is joined to Arduino GND; check AO wire is firmly seated |
+| Reset does nothing | Not in ALARM, or condition still present | Read Serial: it prints "Nothing to reset" or "REFUSED"; remove stimulus, wait ≥ 3 s |
+| Reset button ignored | Held for less than 2 s, or wired to wrong pin | Hold for `RESET_HOLD_MS`; confirm D7 to GND through button |
+| Servo jitters / board resets | Servo powered from Arduino 5 V | Use external supply with common ground |
+| LCD blank | Wrong I2C address or contrast | Try address 0x3F; adjust contrast potentiometer on the backpack |
+| Alarm lost after power cut | Expected behavior | The latch is held in RAM only. See "Future Improvements" in the README |
+
+## General Debug Procedure
+
+1. Disconnect all outputs and verify sensor readings in Serial Monitor.
+2. Verify each output individually with a simple blink test.
+3. Use the `f` and `m` commands to separate software logic issues from sensor issues.
+4. Change one parameter at a time and record the effect.
