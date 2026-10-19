@@ -94,15 +94,15 @@ The thresholds, timing, sensor characteristics, and fault-detection logic requir
 
  📚 Existing Project Documentation
 
-- [Bill of Materials](<Bill of Materials (BOM)>)
-- [Project review](<Project Review>)
+- [Bill of Materials](Bill%20of%20Materials%20%28BOM%29)
+- [Project review](Project%20Review)
 - [Proposed wiring](<Wiring>)
-- [System diagrams](<System Diagrams>)
-- [Testing plan and results template](<Testing Plan and Results Template>)
-- [Troubleshooting guide](<Troubleshooting Guide>)
-- [Questions and answers](<Questions and Answers>)
-- [GitHub setup guide](<GitHub Setup Guide>)
-- [Wiring and logic image](<wiring and logics.jpg>)
+- [System diagrams](System%20Diagrams)
+- [Testing plan and results template](Testing%20Plan%20and%20Results%20Template)
+- [Troubleshooting guide](Troubleshooting%20Guide)
+- [Questions and answers](Questions%20and%20Answers)
+- [GitHub setup guide](GitHub%20Setup%20Guide)
+- [Wiring and logic image](wiring%20and%20logics.jpg)
 
 These links preserve the existing paths in the repository.
 
