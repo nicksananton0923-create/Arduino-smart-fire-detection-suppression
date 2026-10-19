@@ -1,0 +1,94 @@
+# Viva Preparation: 20 Technical Questions and Answers
+
+> Answers describe the **proposed educational design** in this repository. If your original build differed, state that honestly and explain the differences.
+
+**1. What is the purpose of this project?**
+To demonstrate, in an educational setting, how an Arduino can monitor a flame sensor and a smoke/gas sensor, warn users with an LED and buzzer, and trigger a simulated suppression output when a configured alarm condition occurs.
+
+**2. Is this a certified fire alarm?**
+No. It is a low-cost learning prototype. It has no certification, no tested reliability, and must not be used to protect life or property.
+
+**3. How does a flame sensor module work?**
+It uses an IR-sensitive photodiode or phototransistor responding to wavelengths typically emitted by flames (roughly 760–1100 nm). An LM393 comparator produces a digital output at a trimmer-set threshold, and the module also provides an analog output.
+
+**4. How does the MQ-2 sensor work?**
+It contains a tin-dioxide (SnO2) sensing layer heated by an internal heater. When combustible gases or smoke-related particles/gases are present, the layer's conductivity rises, which changes the voltage on the analog output.
+
+**5. Why is the MQ-2 not a certified smoke detector?**
+It is a gas sensor that responds to several gases and is cross-sensitive to humidity, temperature, alcohol, and cooking vapors. It does not meet detection standards (e.g., EN 54 or UL 217), is not tested for sensitivity, and is not self-diagnosing.
+
+**6. Why does the MQ-2 need warm-up and calibration?**
+The heater must stabilize the sensing layer before readings are meaningful, and the baseline varies between units, with age, temperature, and humidity. The code records a clean-air baseline after warm-up and alarms on a rise above that baseline.
+
+**7. Difference between flame detection and smoke detection?**
+Flame detection senses IR/light radiation from an active flame and needs line of sight, but responds quickly. Smoke detection senses particles or gases in the air, needs no line of sight, but is slower and affected by airflow and non-fire sources.
+
+**8. Why can detection of a sensor reading not confirm a fire?**
+Sensors respond to proxies (IR radiation, gas concentration) that can come from non-fire sources such as sunlight, heaters, or cooking. Confirmation needs multiple independent indications and human verification.
+
+**9. Why use two sensors?**
+Multi-sensor confirmation reduces false alarms. A single sensor triggers only a pre-alarm; both sensors together (or one persisting for a long time) trigger the latched alarm.
+
+**10. What is a moving-average filter and why is it used?**
+It averages the last N samples (8 here). This reduces electrical noise and single-sample spikes without complicated math.
+
+**11. What is debouncing in this code?**
+A condition must persist for `CONFIRM_MS` to count as active and be absent for `CLEAR_MS` to clear. This prevents flickering and short transients from causing alarms.
+
+**12. What is hysteresis and where is it used?**
+Using different thresholds for entering and leaving a condition, so readings hovering near the threshold do not toggle repeatedly. It is applied to both sensors.
+
+**13. What does "alarm latching" mean?**
+Once the alarm is triggered, it stays active even if the stimulus disappears, until an authorized reset is performed. This ensures an event cannot silently vanish.
+
+**14. How does reset work?**
+Hold the button for 2 s or send `r` in Serial Monitor. Reset is refused while a sensor condition is still active.
+
+**15. Why is the buzzer driven through a transistor?**
+Active buzzers may draw around 30 mA, above the recommended 20 mA per Arduino pin. The NPN transistor lets the GPIO supply only about 4 mA of base current.
+
+**16. Why current-limiting resistors on LEDs?**
+An LED has no internal current limit. A 220 Ω resistor at 5 V gives about 13–14 mA, protecting both the LED and the Arduino pin.
+
+**17. What does the "simulated suppression" output do?**
+It turns on an amber LED (or moves a demonstration servo) for a fixed duration after a short pre-discharge delay. It releases nothing and only demonstrates the control sequence.
+
+**18. What extra requirements would a real suppression actuator need?**
+Rated and isolated drivers, independent power, manual override and abort, interlocks, safe agent selection, pressure-safety design, compliance with fire-protection standards (e.g., NFPA/EN), certified detection and control panel, supervision of wiring, and professional design and inspection.
+
+**19. How does the system handle sensor faults?**
+The MQ-2 channel is flagged as faulted when its filtered value stays at an extreme (≤ 5 or ≥ 1018) for 3 s, causing the FAULT state. This is a heuristic only. Flame-channel fault detection is disabled by default because healthy modules can read extreme values. A disconnected sensor is not guaranteed to be detected.
+
+**20. What are the main limitations and how can they be improved?**
+Limitations: no certification, single-point failures, no watchdog, RAM-only latch, uncalibrated sensors, and cross-sensitivity. Improvements: add a hardware watchdog, store state in EEPROM, add temperature (e.g., thermistor) and CO sensors, use supervised sensor loops, add remote notifications, and use a certified detection panel for any real protection.
+
+---
+
+## Quick Reference
+
+### Role of each component
+
+| Component | Role |
+|---|---|
+| Arduino Uno | Reads sensors, runs filtering and state logic, drives outputs |
+| Flame sensor | Detects IR radiation typical of flames (line of sight) |
+| MQ-2 | Detects smoke/combustible gas as a conductivity change |
+| Buzzer + NPN | Audible alarm, driven safely |
+| Red LED | Warning/alarm visual |
+| Green LED | Normal status |
+| Amber LED / servo | Simulated suppression indicator |
+| Push-button | Manual reset |
+| LCD (optional) | Status display |
+| Resistors | Limit LED and base currents |
+
+### 60-second English interview explanation
+
+"This is an Arduino-based educational fire detection prototype. It reads a flame sensor and an MQ-2 smoke sensor, filters the readings with a moving average, and debounces them to avoid false triggers. A single sensor produces a pre-alarm with a blinking red LED and short beeps. If both sensors agree, or one persists for a configured time, the system enters a latched alarm with a steady red LED and buzzer, and after a short delay it activates a simulated suppression output, an LED, for a fixed duration. The alarm can only be reset manually when the sensors are clear. The firmware also has a warm-up phase, serial diagnostics, and a basic fault state. I want to be clear that this is a learning project, not a certified fire alarm, and that thresholds need calibration and testing before drawing any conclusions."
+
+### Potential industrial applications (conceptually, with certified equipment)
+
+Server rooms and electrical panels (early-warning monitoring), small workshops and storage rooms, kitchens and ducts, and unattended equipment enclosures. A real deployment requires certified detectors, control panels, and professional design.
+
+### Possible future enhancements
+
+Temperature and CO sensors; EEPROM event logging; watchdog timer; wireless alerts (ESP32/GSM); real-time clock timestamps; supervised sensor loops; battery backup; PCB design; adaptive baseline tracking; and a calibrated test rig.
