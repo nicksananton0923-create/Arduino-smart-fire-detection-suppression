@@ -1,0 +1,87 @@
+# Proposed Wiring
+
+> **Status: PROPOSED wiring.** This is a recommended demonstration configuration. It is **not** a record of the original project's hardware, which has not been confirmed. Verify every connection against the datasheet of the exact modules you buy before applying power.
+
+## 1. Pin-to-Pin Table (Arduino Uno, 5 V logic)
+
+| # | From (component pin) | To (Arduino / node) | Notes |
+|---|---|---|---|
+| 1 | Flame module VCC | 5V | Module runs from 5 V |
+| 2 | Flame module GND | GND | Common ground |
+| 3 | Flame module AO | A0 | Analog output used by code |
+| 4 | Flame module DO | *not connected* | Digital output unused (threshold set in software) |
+| 5 | MQ-2 module VCC | 5V | Heater draws about 150 mA |
+| 6 | MQ-2 module GND | GND | Common ground |
+| 7 | MQ-2 module AO | A1 | Analog output used by code |
+| 8 | MQ-2 module DO | *not connected* | Unused |
+| 9 | D4 | 220 Ω → Green LED anode | Cathode to GND |
+| 10 | D5 | 220 Ω → Red LED anode | Cathode to GND |
+| 11 | D6 | 220 Ω → Amber/blue LED anode | **Simulated suppression indicator**; cathode to GND |
+| 12 | D7 | Push-button pin 1 | Pin 2 to GND (internal pull-up used) |
+| 13 | D8 | 1 kΩ → NPN base (2N2222 / BC547) | Buzzer driver |
+| 14 | NPN emitter | GND | |
+| 15 | NPN collector | Buzzer negative (−) | |
+| 16 | Buzzer positive (+) | 5V | Active buzzer, 5 V type |
+| 17 | *(optional)* LCD I2C VCC / GND | 5V / GND | 16x2 I2C backpack |
+| 18 | *(optional)* LCD I2C SDA / SCL | A4 / A5 | Set `USE_LCD 1`; address 0x27 or 0x3F |
+| 19 | *(optional)* Servo signal | D9 | Set `USE_SERVO 1` |
+| 20 | *(optional)* Servo V+ / GND | **External 5 V supply** | Share GND with Arduino |
+
+## 2. Electrical Checks
+
+| Check | Result |
+|---|---|
+| LED current (5 V, 220 Ω, red ≈ 2 V) | ≈ 13.6 mA per LED. Under the 20 mA recommended per pin. |
+| Total GPIO current | 3 LEDs ≈ 35–40 mA plus buzzer base ≈ 4 mA. Far below the ATmega328P 200 mA package limit. |
+| Buzzer | Active 5 V buzzers can draw ~30 mA, above the 20 mA recommended per pin. The NPN transistor stage avoids loading the GPIO. |
+| Transistor base current | (5 − 0.7) V / 1 kΩ ≈ 4.3 mA. Adequate to saturate for ≈ 30 mA load. |
+| Flame module AO | Powered at 5 V, AO swings 0–5 V. Safe for the Uno's 5 V ADC. |
+| MQ-2 module AO | Powered at 5 V, AO can reach ~5 V. Safe for Uno. |
+| 3.3 V boards (ESP32, Pico, etc.) | **Do not connect 5 V analog outputs directly.** Power the module at 3.3 V (and re-calibrate) or use a resistor divider (e.g., 10 kΩ / 20 kΩ). Confirm the module's output behavior at 3.3 V first. |
+| Power budget (USB) | Uno + MQ-2 heater + modules + LEDs is typically within USB 500 mA. Servo must **not** be powered from the Arduino 5 V pin. |
+| Magnetic buzzers | If you use a magnetic (coil) buzzer, add a 1N4148 flyback diode across it (cathode to +). |
+
+> Module pinouts and output polarity vary between manufacturers. Measure AO with a multimeter before connecting it to the Arduino.
+
+## 3. Proposed Wiring Diagram (ASCII)
+
+```
+                     +5V RAIL ─────────────┬──────────┬───────────┬──────────────┐
+                                           │          │           │              │
+                                      [Flame VCC] [MQ-2 VCC]  [Buzzer +]    (LCD VCC)
+                                           │          │           │
+   ┌─────────────────────────────┐    [Flame Sensor] [MQ-2]   [Buzzer −]
+   │         ARDUINO UNO         │         │ AO        │ AO        │
+   │                             │         │           │           C
+   │  A0 ◄───────────────────────┼─────────┘           │        2N2222
+   │  A1 ◄───────────────────────┼─────────────────────┘        B ◄──[1kΩ]── D8
+   │                             │                               E
+   │  D4 ──[220Ω]──►|── GREEN ──┼──┐                            │
+   │  D5 ──[220Ω]──►|── RED ────┼──┤                            │
+   │  D6 ──[220Ω]──►|── AMBER ──┼──┤   (LED cathodes)           │
+   │                             │  │                            │
+   │  D7 ──── [RESET BTN] ───────┼──┤                            │
+   │                             │  │                            │
+   │  A4 (SDA) / A5 (SCL) ───────┼──┼──► optional I2C LCD        │
+   │  D9 ────────────────────────┼──┼──► optional servo signal   │
+   │                             │  │                            │
+   │  GND ───────────────────────┼──┴────────────────────────────┴──► COMMON GND
+   └─────────────────────────────┘     (all module GNDs, LED cathodes,
+                                        button, transistor emitter,
+                                        and external servo supply GND)
+```
+
+## 4. Optional: Relay Module (Low-Voltage Demonstration Load Only)
+
+If you want to switch a real indicator load, you may connect an **opto-isolated relay module input** to D6 (instead of the amber LED) and set `SUPPRESSION_ACTIVE_HIGH` to match the module's logic (many modules are active-LOW).
+
+Allowed for the educational demo: a low-voltage DC indicator lamp or small buzzer, within the relay's rating, powered from its own supply.
+
+**Not allowed without proper engineering review:** mains-powered equipment, pumps, solenoid valves, pressurized systems, extinguishing agents, or any hazardous load. See the README Safety section.
+
+## 5. Optional: Servo as Simulated Suppression Mechanism
+
+- Power from a separate 5 V supply (1–2 A). A stalled micro-servo can draw several hundred mA.
+- Connect supply GND to Arduino GND.
+- Use the servo only to move a flag or lever as a visual demonstration. It must not release any fluid, gas, or powder.
+- Note: the Servo library disables `analogWrite()` (PWM) on pins 9 and 10 on the Uno.
