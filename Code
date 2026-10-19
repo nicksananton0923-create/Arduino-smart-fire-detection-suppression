@@ -1,0 +1,420 @@
+/*
+  Arduino-Based Smart Fire Detection, Alarm and Automatic Suppression System
+  File    : smart_fire_detection.ino
+  Version : 1.0 (educational prototype)
+
+  *** EDUCATIONAL DEMONSTRATION ONLY ***
+  This is NOT a certified fire alarm or fire suppression system. It must not be
+  relied upon to protect life or property. The "suppression" output is a
+  SIMULATED indicator (LED) unless you engineer and verify a real actuator.
+
+  ALL PIN ASSIGNMENTS BELOW ARE *PROPOSED WIRING* (not confirmed original
+  hardware). See docs/proposed_wiring.md.
+
+  Proposed hardware : Arduino Uno (5 V), flame sensor module (analog out AO),
+                      MQ-2 smoke/gas module (analog out AO), active buzzer via
+                      NPN transistor, red/green/amber LEDs, reset push-button,
+                      optional 16x2 I2C LCD, optional servo.
+
+  Required libraries: NONE for the default build.
+                      Optional: LiquidCrystal_I2C (set USE_LCD 1)
+                                Servo (bundled with Arduino IDE; set USE_SERVO 1)
+
+  Serial Monitor    : 9600 baud, "Newline" line ending.
+  Serial commands   : h = help, s = status, r = reset latched alarm,
+                      f = toggle SIMULATED flame, m = toggle SIMULATED smoke
+*/
+
+#include <Arduino.h>
+
+// ----------------------------- Feature switches -----------------------------
+#define USE_LCD    0   // 1 = enable 16x2 I2C LCD (needs LiquidCrystal_I2C library)
+#define USE_SERVO  0   // 1 = enable servo as simulated suppression mechanism
+
+#if USE_LCD
+  #include <Wire.h>
+  #include <LiquidCrystal_I2C.h>
+  LiquidCrystal_I2C lcd(0x27, 16, 2);   // PROPOSED I2C address; some modules use 0x3F
+#endif
+
+#if USE_SERVO
+  #include <Servo.h>
+  Servo suppressionServo;
+  const uint8_t SERVO_IDLE_ANGLE   = 0;
+  const uint8_t SERVO_ACTIVE_ANGLE = 90;
+#endif
+
+// ------------------------- PROPOSED PIN ASSIGNMENTS -------------------------
+const uint8_t PIN_FLAME_AO     = A0;  // Flame sensor analog output
+const uint8_t PIN_SMOKE_AO     = A1;  // MQ-2 analog output
+const uint8_t PIN_LED_GREEN    = 4;   // Normal-status LED (via 220 ohm)
+const uint8_t PIN_LED_RED      = 5;   // Warning/alarm LED (via 220 ohm)
+const uint8_t PIN_SUPPRESSION  = 6;   // SIMULATED suppression output (amber LED via 220 ohm)
+const uint8_t PIN_RESET_BTN    = 7;   // Reset button to GND (internal pull-up)
+const uint8_t PIN_BUZZER       = 8;   // Drives NPN transistor base through 1 kOhm
+const uint8_t PIN_SERVO        = 9;   // Optional servo signal (servo on separate 5 V supply)
+
+// ------------------------------ Configuration -------------------------------
+// Sensor polarity: most LM393 flame modules give a LOWER analog value when a
+// flame is detected. Set to false if your module behaves the opposite way.
+const bool FLAME_ACTIVE_LOW = true;
+
+// Thresholds are STARTING VALUES ONLY. Calibrate with your own sensors.
+const int FLAME_THRESHOLD     = 500;  // ADC counts (0-1023)
+const int FLAME_HYSTERESIS    = 40;
+const int SMOKE_DELTA_COUNTS  = 150;  // alarm when reading > baseline + delta
+const int SMOKE_HYSTERESIS    = 30;
+
+// Timing (milliseconds)
+const uint16_t SAMPLE_INTERVAL_MS  = 50;
+const uint32_t SMOKE_WARMUP_MS     = 60000UL; // MQ-2 needs preheat; longer is better
+const uint32_t CONFIRM_MS          = 1500;    // condition must persist this long
+const uint32_t CLEAR_MS            = 3000;    // condition must be absent this long
+const bool     ESCALATE_ON_SINGLE_SENSOR = true;
+const uint32_t SINGLE_SENSOR_ESCALATE_MS = 15000UL; // pre-alarm -> alarm if one sensor persists
+const bool     SUPPRESSION_ENABLED = true;
+const uint32_t SUPPRESSION_DELAY_MS    = 5000UL;  // pre-discharge delay in ALARM state
+const uint32_t SUPPRESSION_DURATION_MS = 10000UL;
+const uint32_t RESET_HOLD_MS       = 2000UL;
+const uint32_t DIAG_INTERVAL_MS    = 1000UL;
+const uint32_t LAMP_TEST_MS        = 1000UL;
+
+// Suppression output polarity (set false if driving an active-LOW relay module input)
+const bool SUPPRESSION_ACTIVE_HIGH = true;
+
+// Fault detection (heuristic): filtered reading stuck at an extreme value.
+// Set lo = -1 and hi = 1024 to disable a limit. Flame channel is disabled by
+// default because a healthy module may legitimately read near 0 or near 1023.
+const int FLAME_FAULT_LOW  = -1;
+const int FLAME_FAULT_HIGH = 1024;
+const int SMOKE_FAULT_LOW  = 5;
+const int SMOKE_FAULT_HIGH = 1018;
+const uint32_t FAULT_CONFIRM_MS = 3000UL;
+
+const uint8_t FILTER_SIZE = 8;  // moving-average window
+
+// --------------------------------- Types ------------------------------------
+enum SystemState : uint8_t { STATE_NORMAL, STATE_PREALARM, STATE_ALARM, STATE_FAULT };
+enum ChannelId   : uint8_t { CH_FLAME = 0, CH_SMOKE = 1 };
+
+struct Channel {
+  uint16_t buf[FILTER_SIZE];
+  uint8_t  idx;
+  uint32_t sum;
+  uint16_t raw;        // latest raw ADC sample
+  uint16_t value;      // filtered (moving average)
+  bool     rawCond;    // instantaneous "condition present"
+  bool     active;     // debounced condition
+  uint32_t changeAt;   // when rawCond last changed
+  bool     badNow;     // value outside valid range
+  uint32_t badSince;
+  bool     fault;
+};
+
+// -------------------------------- Variables ---------------------------------
+Channel ch[2];
+SystemState state = STATE_NORMAL;
+bool smokeReady = false;
+int  smokeBaseline = 0;
+bool simFlame = false, simSmoke = false;   // serial-command test simulation
+uint32_t preAlarmSince = 0, alarmStart = 0;
+bool suppressionActive = false, suppressionDone = false;
+uint32_t lastSample = 0, lastDiag = 0, lastLcd = 0;
+bool btnHeld = false, btnHandled = false;
+uint32_t btnSince = 0;
+
+// ------------------------------- Helper utils -------------------------------
+const __FlashStringHelper* stateName(SystemState s) {
+  switch (s) {
+    case STATE_NORMAL:   return F("NORMAL");
+    case STATE_PREALARM: return F("PRE-ALARM");
+    case STATE_ALARM:    return F("ALARM-LATCHED");
+    case STATE_FAULT:    return F("FAULT");
+  }
+  return F("?");
+}
+
+// Returns true during the "on" part of a repeating on/off pattern.
+bool blinkPhase(uint16_t onMs, uint16_t offMs) {
+  return (millis() % (uint32_t)(onMs + offMs)) < onMs;
+}
+
+void writeSuppression(bool on) {
+  digitalWrite(PIN_SUPPRESSION, (on == SUPPRESSION_ACTIVE_HIGH) ? HIGH : LOW);
+#if USE_SERVO
+  suppressionServo.write(on ? SERVO_ACTIVE_ANGLE : SERVO_IDLE_ANGLE);
+#endif
+}
+
+// ------------------------- Filtering and evaluation -------------------------
+void initChannel(Channel &c, uint8_t pin) {
+  uint16_t s = analogRead(pin);
+  for (uint8_t i = 0; i < FILTER_SIZE; i++) c.buf[i] = s;
+  c.idx = 0;
+  c.sum = (uint32_t)s * FILTER_SIZE;
+  c.raw = s;
+  c.value = s;
+  c.rawCond = c.active = c.badNow = c.fault = false;
+  c.changeAt = c.badSince = 0;
+}
+
+// Moving-average filter: smooths electrical noise and single-sample spikes.
+uint16_t updateFilter(Channel &c, uint16_t sample) {
+  c.raw = sample;
+  c.sum -= c.buf[c.idx];
+  c.buf[c.idx] = sample;
+  c.sum += sample;
+  c.idx = (c.idx + 1) % FILTER_SIZE;
+  c.value = (uint16_t)(c.sum / FILTER_SIZE);
+  return c.value;
+}
+
+// Debounce: condition must persist CONFIRM_MS to become active, and be absent
+// CLEAR_MS to become inactive.
+void debounce(Channel &c, bool rawCondition, uint32_t now) {
+  if (rawCondition != c.rawCond) { c.rawCond = rawCondition; c.changeAt = now; }
+  if (c.active != c.rawCond) {
+    uint32_t need = c.rawCond ? CONFIRM_MS : CLEAR_MS;
+    if (now - c.changeAt >= need) c.active = c.rawCond;
+  }
+}
+
+bool flameCondition() {
+  if (simFlame) return true;
+  int v = ch[CH_FLAME].value;
+  bool was = ch[CH_FLAME].active;
+  if (FLAME_ACTIVE_LOW) return was ? (v < FLAME_THRESHOLD + FLAME_HYSTERESIS) : (v < FLAME_THRESHOLD);
+  return was ? (v > FLAME_THRESHOLD - FLAME_HYSTERESIS) : (v > FLAME_THRESHOLD);
+}
+
+bool smokeCondition() {
+  if (simSmoke) return true;
+  if (!smokeReady) return false;            // ignore MQ-2 during warm-up
+  int v = ch[CH_SMOKE].value;
+  int thr = smokeBaseline + SMOKE_DELTA_COUNTS;
+  return ch[CH_SMOKE].active ? (v > thr - SMOKE_HYSTERESIS) : (v > thr);
+}
+
+// Fault heuristic: filtered value outside valid window for FAULT_CONFIRM_MS.
+void checkFault(Channel &c, int lo, int hi, uint32_t now) {
+  bool bad = ((int)c.value <= lo) || ((int)c.value >= hi);
+  if (bad) {
+    if (!c.badNow) { c.badNow = true; c.badSince = now; }
+    if (now - c.badSince >= FAULT_CONFIRM_MS) c.fault = true;
+  } else {
+    c.badNow = false;
+    c.fault = false;
+  }
+}
+
+// ------------------------------ State machine -------------------------------
+void enterAlarm(const __FlashStringHelper* reason) {
+  state = STATE_ALARM;
+  alarmStart = millis();
+  suppressionActive = false;
+  suppressionDone = false;
+  Serial.print(F("[EVENT] ALARM LATCHED. Reason: "));
+  Serial.println(reason);
+}
+
+void handleSuppression(uint32_t now) {
+  if (!SUPPRESSION_ENABLED || suppressionDone) return;
+  uint32_t el = now - alarmStart;
+  if (!suppressionActive && el >= SUPPRESSION_DELAY_MS) {
+    suppressionActive = true;
+    Serial.println(F("[EVENT] SIMULATED SUPPRESSION ON"));
+  }
+  if (suppressionActive && el >= SUPPRESSION_DELAY_MS + SUPPRESSION_DURATION_MS) {
+    suppressionActive = false;
+    suppressionDone = true;
+    Serial.println(F("[EVENT] SIMULATED SUPPRESSION OFF (one-shot complete)"));
+  }
+}
+
+void updateStateMachine(uint32_t now) {
+  if (state == STATE_ALARM) { handleSuppression(now); return; }  // latched
+
+  bool flameAct = ch[CH_FLAME].active && !ch[CH_FLAME].fault;
+  bool smokeAct = ch[CH_SMOKE].active && !ch[CH_SMOKE].fault;
+
+  if (flameAct && smokeAct) { enterAlarm(F("flame + smoke (multi-sensor)")); return; }
+
+  if (flameAct || smokeAct) {
+    if (state != STATE_PREALARM) {
+      state = STATE_PREALARM;
+      preAlarmSince = now;
+      Serial.println(flameAct ? F("[EVENT] PRE-ALARM: flame channel") : F("[EVENT] PRE-ALARM: smoke channel"));
+    } else if (ESCALATE_ON_SINGLE_SENSOR && (now - preAlarmSince >= SINGLE_SENSOR_ESCALATE_MS)) {
+      enterAlarm(F("single sensor persisted"));
+    }
+    return;
+  }
+
+  SystemState next = (ch[CH_FLAME].fault || ch[CH_SMOKE].fault) ? STATE_FAULT : STATE_NORMAL;
+  if (next != state) {
+    state = next;
+    Serial.print(F("[EVENT] State -> "));
+    Serial.println(stateName(state));
+  }
+}
+
+// Reset is accepted only for a latched alarm and only when conditions are clear.
+void attemptReset() {
+  if (state != STATE_ALARM) { Serial.println(F("[RESET] Nothing to reset.")); return; }
+  if (ch[CH_FLAME].active || ch[CH_SMOKE].active) {
+    Serial.println(F("[RESET] REFUSED: alarm condition still present."));
+    return;
+  }
+  suppressionActive = false;
+  suppressionDone = false;
+  state = STATE_NORMAL;
+  Serial.println(F("[RESET] Alarm reset. Returning to NORMAL monitoring."));
+}
+
+// ---------------------------------- Outputs ---------------------------------
+void updateOutputs() {
+  bool green = false, red = false, buzzer = false;
+  switch (state) {
+    case STATE_NORMAL:   green = true; break;
+    case STATE_PREALARM: red = blinkPhase(500, 500); buzzer = blinkPhase(150, 850); break;
+    case STATE_ALARM:    red = true;
+                         buzzer = suppressionActive ? true : blinkPhase(300, 300); break;
+    case STATE_FAULT:    green = blinkPhase(500, 500); red = !green;
+                         buzzer = blinkPhase(100, 4900); break;
+  }
+  digitalWrite(PIN_LED_GREEN, green);
+  digitalWrite(PIN_LED_RED, red);
+  digitalWrite(PIN_BUZZER, buzzer);
+  writeSuppression(state == STATE_ALARM && suppressionActive);
+}
+
+// ----------------------------- Display / diagnostics ------------------------
+void printDiagnostics(uint32_t now) {
+  Serial.print(F("t="));      Serial.print(now / 1000);
+  Serial.print(F("s state=")); Serial.print(stateName(state));
+  Serial.print(F(" flame="));  Serial.print(ch[CH_FLAME].value);
+  Serial.print(F(" (thr "));   Serial.print(FLAME_THRESHOLD);
+  Serial.print(F(") smoke=")); Serial.print(ch[CH_SMOKE].value);
+  Serial.print(F(" (base "));  Serial.print(smokeBaseline);
+  Serial.print(F(" thr "));    Serial.print(smokeBaseline + SMOKE_DELTA_COUNTS);
+  Serial.print(F(") fAct="));  Serial.print(ch[CH_FLAME].active);
+  Serial.print(F(" sAct="));   Serial.print(ch[CH_SMOKE].active);
+  Serial.print(F(" fFlt="));   Serial.print(ch[CH_FLAME].fault);
+  Serial.print(F(" sFlt="));   Serial.print(ch[CH_SMOKE].fault);
+  Serial.print(F(" supp="));   Serial.print(suppressionActive);
+  if (!smokeReady) Serial.print(F(" [MQ2 WARM-UP]"));
+  if (simFlame || simSmoke) Serial.print(F(" [SIM]"));
+  Serial.println();
+}
+
+void updateLcd() {
+#if USE_LCD
+  char l1[17], l2[17];
+  const char* name = !smokeReady && state == STATE_NORMAL ? "MQ2 WARM-UP"
+                   : (state == STATE_NORMAL)   ? "NORMAL"
+                   : (state == STATE_PREALARM) ? "PRE-ALARM"
+                   : (state == STATE_ALARM)    ? "ALARM LATCHED" : "SENSOR FAULT";
+  snprintf(l1, sizeof(l1), "%-16s", name);
+  snprintf(l2, sizeof(l2), "F:%4d S:%4d %s", ch[CH_FLAME].value, ch[CH_SMOKE].value, suppressionActive ? "SP" : "  ");
+  lcd.setCursor(0, 0); lcd.print(l1);
+  lcd.setCursor(0, 1); lcd.print(l2);
+#endif
+}
+
+void printHelp() {
+  Serial.println(F("Commands: h=help s=status r=reset f=toggle SIM flame m=toggle SIM smoke"));
+}
+
+void handleSerial() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    switch (c) {
+      case 'h': printHelp(); break;
+      case 's': printDiagnostics(millis()); break;
+      case 'r': attemptReset(); break;
+      case 'f': simFlame = !simFlame; Serial.print(F("[SIM] flame ")); Serial.println(simFlame ? F("ON") : F("OFF")); break;
+      case 'm': simSmoke = !simSmoke; Serial.print(F("[SIM] smoke ")); Serial.println(simSmoke ? F("ON") : F("OFF")); break;
+      default: break;
+    }
+  }
+}
+
+void handleResetButton(uint32_t now) {
+  bool pressed = (digitalRead(PIN_RESET_BTN) == LOW);
+  if (pressed) {
+    if (!btnHeld) { btnHeld = true; btnHandled = false; btnSince = now; }
+    else if (!btnHandled && now - btnSince >= RESET_HOLD_MS) { btnHandled = true; attemptReset(); }
+  } else {
+    btnHeld = false;
+  }
+}
+
+// ------------------------------- Setup / loop -------------------------------
+void setup() {
+  pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_RED, OUTPUT);
+  pinMode(PIN_SUPPRESSION, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_RESET_BTN, INPUT_PULLUP);
+  digitalWrite(PIN_BUZZER, LOW);
+  Serial.begin(9600);
+
+#if USE_SERVO
+  suppressionServo.attach(PIN_SERVO);
+#endif
+  writeSuppression(false);
+
+#if USE_LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0); lcd.print(F("Fire Detect Demo"));
+#endif
+
+  Serial.println(F("=== Smart Fire Detection - EDUCATIONAL PROTOTYPE (not certified) ==="));
+  Serial.println(F("Pin map is PROPOSED wiring. Running lamp test..."));
+  digitalWrite(PIN_LED_GREEN, HIGH);
+  digitalWrite(PIN_LED_RED, HIGH);
+  digitalWrite(PIN_BUZZER, HIGH);
+  writeSuppression(true);
+  delay(LAMP_TEST_MS);
+  digitalWrite(PIN_BUZZER, LOW);
+  writeSuppression(false);
+
+  initChannel(ch[CH_FLAME], PIN_FLAME_AO);
+  initChannel(ch[CH_SMOKE], PIN_SMOKE_AO);
+  Serial.println(F("MQ-2 warm-up in progress; smoke channel ignored until complete."));
+  printHelp();
+}
+
+void loop() {
+  uint32_t now = millis();
+
+  handleSerial();
+  handleResetButton(now);
+
+  if (now - lastSample >= SAMPLE_INTERVAL_MS) {
+    lastSample = now;
+    updateFilter(ch[CH_FLAME], analogRead(PIN_FLAME_AO));
+    updateFilter(ch[CH_SMOKE], analogRead(PIN_SMOKE_AO));
+
+    if (!smokeReady && now >= SMOKE_WARMUP_MS) {
+      smokeBaseline = ch[CH_SMOKE].value;
+      smokeReady = true;
+      Serial.print(F("[INFO] MQ-2 warm-up complete. Baseline = "));
+      Serial.println(smokeBaseline);
+      if (smokeBaseline + SMOKE_DELTA_COUNTS > 1023)
+        Serial.println(F("[WARN] Baseline too high: smoke threshold unreachable. Check sensor/calibration."));
+    }
+
+    checkFault(ch[CH_FLAME], FLAME_FAULT_LOW, FLAME_FAULT_HIGH, now);
+    checkFault(ch[CH_SMOKE], SMOKE_FAULT_LOW, SMOKE_FAULT_HIGH, now);
+    debounce(ch[CH_FLAME], flameCondition(), now);
+    debounce(ch[CH_SMOKE], smokeCondition(), now);
+    updateStateMachine(now);
+  }
+
+  updateOutputs();
+
+  if (now - lastDiag >= DIAG_INTERVAL_MS) { lastDiag = now; printDiagnostics(now); }
+  if (now - lastLcd >= 500) { lastLcd = now; updateLcd(); }
+}
