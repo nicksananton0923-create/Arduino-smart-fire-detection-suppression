@@ -1,0 +1,34 @@
+# Bill of Materials (BOM)
+
+> **Proposed components.** This is a recommended parts list for the demonstration build. It is not a confirmed inventory of the original project hardware. Prices are intentionally omitted because they vary by region and supplier.
+
+## Essential
+
+| # | Component | Qty | Specification / Note |
+|---|---|---|---|
+| 1 | Arduino Uno R3 (or compatible 5 V board) | 1 | ATmega328P, 5 V logic |
+| 2 | Flame sensor module | 1 | IR flame sensor (LM393) with analog output AO |
+| 3 | MQ-2 smoke/gas sensor module | 1 | Analog output AO; requires warm-up and calibration |
+| 4 | Active buzzer, 5 V | 1 | Driven through transistor |
+| 5 | NPN transistor 2N2222 or BC547 | 1 | Buzzer driver |
+| 6 | Resistor 1 kΩ, 0.25 W | 1 | Transistor base |
+| 7 | Resistor 220 Ω, 0.25 W | 3 | LED current limiting |
+| 8 | Red LED, 5 mm | 1 | Warning / alarm |
+| 9 | Green LED, 5 mm | 1 | Normal status |
+| 10 | Amber or blue LED, 5 mm | 1 | Simulated suppression indicator |
+| 11 | Momentary push-button | 1 | Reset |
+| 12 | Solderless breadboard | 1 | 830 points |
+| 13 | Jumper wires (M-M, M-F) | 1 set | |
+| 14 | USB cable (Type-B for Uno) | 1 | Power and programming |
+
+## Optional
+
+| # | Component | Qty | Note |
+|---|---|---|---|
+| 15 | 16x2 LCD with I2C backpack | 1 | Needs LiquidCrystal_I2C library |
+| 16 | Micro servo (SG90 or similar) | 1 | Simulated suppression lever/flag |
+| 17 | External 5 V supply, 1–2 A | 1 | Required if using a servo |
+| 18 | Opto-isolated relay module, 5 V | 1 | Low-voltage demonstration load only |
+| 19 | 1N4148 diode | 1 | Flyback protection if magnetic buzzer/relay load |
+| 20 | Project enclosure / base board | 1 | Mounting and presentation |
+| 21 | Multimeter | 1 | Verify sensor output and polarity |
