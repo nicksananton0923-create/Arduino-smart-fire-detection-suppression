@@ -1,0 +1,63 @@
+# Testing Plan and Results Template
+
+> **No test results are included.** Every "Observed result" field is intentionally blank. Fill these in only from your own measurements and observations. Do not record a test as passed unless you actually performed it.
+
+## Safe Testing Rules
+
+- Never create a real fire to test the prototype. No lighters, candles, or burning materials near the circuit.
+- Use the Serial Monitor simulation commands (`f`, `m`) to test logic without any flame or smoke.
+- For the flame sensor hardware path, use a **safe light source** such as a phone torch or an IR remote LED held close to the sensor, as the module responds to IR and bright light (sensitivity varies by module).
+- For the MQ-2 hardware path, use a **safe test method** such as the vapor from a cotton swab lightly moistened with isopropyl alcohol, held away from the sensor at a distance, in a ventilated space with no ignition sources. Do not use butane gas, lighters, or incense/burning material.
+- Work in a ventilated area and keep a responsible person present.
+
+## Pre-Test Calibration
+
+1. Upload the sketch and open Serial Monitor at 9600 baud.
+2. Let the MQ-2 warm up (default 60 s; a longer preheat gives more stable readings).
+3. Record the clean-air smoke baseline printed at warm-up completion.
+4. Record the flame channel value with no light source nearby, and with the safe light source close.
+5. Adjust `FLAME_THRESHOLD` and `SMOKE_DELTA_COUNTS` in the sketch so that normal readings stay well clear of the threshold. Re-upload and repeat.
+
+| Calibration item | Observed value |
+|---|---|
+| Flame reading, no light source | |
+| Flame reading, safe light source close | |
+| Flame threshold chosen | |
+| MQ-2 clean-air baseline | |
+| MQ-2 reading during safe vapor test | |
+| Smoke delta chosen | |
+
+## Test Cases
+
+| ID | Test | Procedure | Expected behavior | Observed result | Pass/Fail | Date/Tester |
+|---|---|---|---|---|---|---|
+| T1 | Normal operation | Power on, wait for warm-up, no stimulus | Green LED steady; state NORMAL; no buzzer | | | |
+| T2 | Lamp test at power-up | Reset the board | All LEDs and buzzer briefly on, then normal | | | |
+| T3 | Simulated flame (software) | Send `f` | After ~1.5 s: PRE-ALARM, red blinking, short beeps; after escalation time: ALARM | | | |
+| T4 | Flame sensor (hardware) | Safe light source near flame sensor | Flame value crosses threshold; PRE-ALARM | | | |
+| T5 | Simulated smoke (software) | Send `m` | PRE-ALARM, then escalation to ALARM if persists | | | |
+| T6 | Smoke sensor (hardware) | Safe vapor test near MQ-2 | Smoke value rises above baseline + delta; PRE-ALARM | | | |
+| T7 | Multi-sensor confirmation | Send `f` and `m` | Immediate ALARM LATCHED (after debounce) | | | |
+| T8 | Buzzer operation | Enter ALARM | 300 ms beep pattern; continuous while suppression active | | | |
+| T9 | LED operation | Cycle through states | LED pattern matches truth table in `system_diagrams.md` | | | |
+| T10 | Simulated suppression | Stay in ALARM | After 5 s delay, amber LED on for 10 s, then off; alarm stays latched | | | |
+| T11 | Latching | Remove stimulus after ALARM | Alarm remains latched | | | |
+| T12 | Reset refused | Press/hold reset (or `r`) while stimulus present | "REFUSED" message; alarm stays | | | |
+| T13 | Reset accepted | Remove stimulus, wait 3 s, hold button 2 s (or `r`) | Return to NORMAL | | | |
+| T14 | Sensor disconnection | Disconnect MQ-2 AO or VCC while running | Reading drifts or reaches extreme; FAULT state if limits are met. **Record actual behavior.** | | | |
+| T15 | Flame sensor disconnection | Disconnect flame AO | Record actual behavior (fault detection is disabled by default for this channel) | | | |
+| T16 | Power interruption | Unplug USB for 10 s, reconnect | Board restarts, lamp test, warm-up, NORMAL. Latched alarm is **not** retained after power loss | | | |
+| T17 | False-alarm susceptibility | Expose to sunlight, bright lamp, hand sanitizer, cooking fumes, perfume | Record whether false alarms occur and at what distance | | | |
+| T18 | Noise/interference | Run with USB charger vs. laptop; move wires near motors/relays | Record any false triggers or reading jitter | | | |
+| T19 | Serial diagnostics | Send `h`, `s` | Help text and status line printed | | | |
+| T20 | Optional LCD / servo | Enable flags and repeat T1, T3, T10 | Display shows status; servo moves during suppression | | | |
+
+## Test Summary
+
+| Item | Value |
+|---|---|
+| Hardware used (exact models) | |
+| Firmware version | 1.0 |
+| Supply used | |
+| Ambient conditions | |
+| Overall conclusion (based only on recorded evidence) | |
