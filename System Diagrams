@@ -1,0 +1,74 @@
+# System Diagrams
+
+> Diagrams below use Mermaid, which GitHub renders automatically. Components shown are **proposed**, not a confirmed original inventory.
+
+## 1. System Block Diagram
+
+```mermaid
+flowchart LR
+    PSU["USB / 5 V supply"] --> MCU
+    FS["Flame sensor module<br/>(analog out)"] --> MCU
+    MQ["MQ-2 smoke/gas module<br/>(analog out)"] --> MCU
+    BTN["Reset push-button"] --> MCU
+    MCU["Arduino Uno<br/>filter, debounce,<br/>state machine"]
+    MCU --> GLED["Green LED<br/>(normal)"]
+    MCU --> RLED["Red LED<br/>(warning / alarm)"]
+    MCU --> BZ["Buzzer<br/>(via NPN driver)"]
+    MCU --> SUP["Simulated suppression<br/>amber LED / servo / low-voltage relay"]
+    MCU --> LCD["Optional 16x2 I2C LCD"]
+    MCU --> SER["Serial Monitor<br/>diagnostics"]
+```
+
+## 2. Control Flowchart
+
+```mermaid
+flowchart TD
+    A([Power on]) --> B["Lamp test<br/>init sensors and filters"]
+    B --> C["MQ-2 warm-up<br/>(smoke channel ignored)"]
+    C --> D["Sample sensors every 50 ms<br/>moving average"]
+    D --> E{"Sensor fault?<br/>(stuck at extreme)"}
+    E -- Yes --> F["FAULT state<br/>alternate LEDs, short beep"]
+    E -- No --> G{"Flame condition<br/>debounced?"}
+    F --> D
+    G --> H{"Smoke condition<br/>debounced?"}
+    H --> I{"Both active?"}
+    I -- Yes --> L
+    I -- No --> J{"Either active?"}
+    J -- No --> K["NORMAL<br/>green LED on"]
+    K --> D
+    J -- Yes --> M["PRE-ALARM<br/>blink red, short beeps"]
+    M --> N{"Persisted longer than<br/>escalation time?"}
+    N -- No --> D
+    N -- Yes --> L
+    L["ALARM LATCHED<br/>red LED on, buzzer"] --> O["Pre-discharge delay"]
+    O --> P["SIMULATED suppression ON<br/>for configured duration"]
+    P --> Q["Suppression OFF (one-shot)<br/>alarm stays latched"]
+    Q --> R{"Reset requested<br/>and conditions clear?"}
+    R -- No --> Q
+    R -- Yes --> K
+```
+
+## 3. State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> NORMAL
+    NORMAL --> PRE_ALARM: one sensor confirmed
+    PRE_ALARM --> NORMAL: condition clears
+    PRE_ALARM --> ALARM: both sensors, or single sensor persists
+    NORMAL --> ALARM: both sensors confirmed
+    NORMAL --> FAULT: sensor reading stuck at extreme
+    FAULT --> NORMAL: fault clears
+    ALARM --> NORMAL: reset (button hold or 'r') and conditions clear
+```
+
+## 4. Output Truth Table
+
+| State | Green LED | Red LED | Buzzer | Simulated suppression |
+|---|---|---|---|---|
+| NORMAL | On | Off | Off | Off |
+| PRE-ALARM | Off | Blinking 1 Hz | Short beep each second | Off |
+| ALARM (before delay) | Off | Steady | 300 ms on / 300 ms off | Off |
+| ALARM (suppression active) | Off | Steady | Continuous | On for configured duration |
+| ALARM (after one-shot) | Off | Steady | 300 ms on / 300 ms off | Off (latched) |
+| FAULT | Alternating with red | Alternating with green | Short beep every 5 s | Off |
