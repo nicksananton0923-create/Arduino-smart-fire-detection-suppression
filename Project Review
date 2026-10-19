@@ -1,0 +1,236 @@
+# Arduino-Based Smart Fire Detection, Alarm and Automatic Suppression System
+
+![Platform](https://img.shields.io/badge/platform-Arduino%20Uno-00979D)
+![Type](https://img.shields.io/badge/type-educational%20prototype-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/physical%20testing-not%20yet%20recorded-lightgrey)
+
+> ## ⚠️ Safety and Scope Notice
+> This is an **educational prototype**. It is **not** a certified fire alarm, **not** a certified fire suppression system, and **not** a substitute for approved fire-protection equipment or emergency procedures. The "suppression" output is a **simulated indicator** (LED). Do not rely on this project to protect people or property.
+
+---
+
+## 1. Project Overview
+
+An Arduino-based prototype that monitors a flame sensor and an MQ-2 smoke/gas sensor, applies filtering and debouncing, warns the user with LEDs and a buzzer, latches an alarm, and activates a **simulated** suppression output.
+
+### Confirmed vs. Proposed Information
+
+| Category | Details |
+|---|---|
+| **Confirmed project facts** | Arduino-based; involves fire detection; a flame and/or smoke sensor is part of the concept; a buzzer gives the audible alarm; the concept includes an automatic suppression system |
+| **Not confirmed** | Original Arduino board, sensor models, wiring, actuator, and suppression components |
+| **Proposed in this repository** | Arduino Uno, flame module, MQ-2 module, NPN-driven buzzer, red/green/amber LEDs, reset button, optional LCD/servo/relay, all pin assignments, and all thresholds |
+
+The hardware and wiring in this repository are a **proposed reconstruction**, not the original hardware inventory.
+
+## 2. Problem Statement
+
+Early warning of a possible fire can reduce damage, but certified systems can be costly and opaque for learners. Students need a safe, low-cost platform to study how sensing, signal processing, alarm logic, and automatic response fit together, while understanding why real fire protection requires certified equipment.
+
+## 3. Objectives
+
+- Detect a possible fire condition using suitable low-cost sensors.
+- Activate an audible alarm and visual warnings.
+- Reduce false alarms using filtering, debouncing, and multi-sensor confirmation.
+- Initiate a clearly identified **simulated** suppression response.
+- Provide diagnostics, reset logic, and basic fault handling.
+- Document the design, testing, and limitations professionally.
+
+## 4. Features
+
+- Dual-sensor monitoring (flame + MQ-2 smoke/gas)
+- 8-sample moving-average filter
+- Time-based debouncing and hysteresis
+- MQ-2 warm-up with automatic clean-air baseline
+- State machine: NORMAL → PRE-ALARM → ALARM (latched) → FAULT
+- Single-sensor pre-alarm; two-sensor or persistent single-sensor escalation
+- Simulated suppression with pre-discharge delay and one-shot duration
+- Manual reset (button hold or serial `r`), refused while condition persists
+- Heuristic sensor-fault detection (MQ-2 channel)
+- Serial diagnostics and **software simulation commands** for safe testing
+- Optional I2C LCD and optional servo (compile-time switches)
+
+## 5. Hardware Requirements (Proposed)
+
+**Essential:** Arduino Uno, flame sensor module (analog out), MQ-2 module (analog out), active 5 V buzzer, NPN transistor (2N2222/BC547), 1 kΩ resistor, 3 × 220 Ω resistors, red / green / amber LEDs, push-button, breadboard, jumper wires, USB cable.
+
+**Optional:** 16x2 I2C LCD, micro servo with external 5 V supply, opto-isolated relay module (low-voltage demo load only).
+
+Full list: [`docs/BOM.md`](docs/BOM.md)
+
+## 6. Component Descriptions
+
+| Component | Function |
+|---|---|
+| Arduino Uno | Executes the monitoring and alarm logic |
+| Flame sensor | Detects IR radiation typical of flames; fast; needs line of sight; affected by sunlight and lamps |
+| MQ-2 | Heated SnO2 gas sensor responding to smoke/combustible gases; needs warm-up and calibration; cross-sensitive to alcohol, humidity, and cooking vapors |
+| Buzzer + NPN | Audible alarm without overloading the GPIO |
+| Red LED | Warning / alarm |
+| Green LED | Normal status |
+| Amber LED | Simulated suppression indicator |
+| Reset button | Manual acknowledgement/reset |
+
+### Why an MQ-2 module is not a certified smoke detector
+It is a general gas sensor, not a tested smoke detector. It is cross-sensitive, drifts with age, temperature, and humidity, has no self-test or standards approval, and its readings are only meaningful after warm-up and calibration against a clean-air baseline.
+
+## 7. System Block Diagram
+
+```mermaid
+flowchart LR
+    PSU["USB / 5 V supply"] --> MCU
+    FS["Flame sensor<br/>(analog)"] --> MCU
+    MQ["MQ-2 module<br/>(analog)"] --> MCU
+    BTN["Reset button"] --> MCU
+    MCU["Arduino Uno<br/>filter, debounce,<br/>state machine"]
+    MCU --> GLED["Green LED"]
+    MCU --> RLED["Red LED"]
+    MCU --> BZ["Buzzer (NPN driver)"]
+    MCU --> SUP["Simulated suppression<br/>(amber LED)"]
+    MCU --> LCD["Optional LCD"]
+    MCU --> SER["Serial Monitor"]
+```
+
+More diagrams (flowchart, state diagram, output table): [`docs/system_diagrams.md`](docs/system_diagrams.md)
+
+## 8. Wiring Instructions (Proposed)
+
+| Arduino | Connection |
+|---|---|
+| 5V / GND | Sensor VCC / common GND |
+| A0 | Flame module AO |
+| A1 | MQ-2 module AO |
+| D4 | Green LED (220 Ω) |
+| D5 | Red LED (220 Ω) |
+| D6 | Amber LED (220 Ω), simulated suppression |
+| D7 | Reset button to GND |
+| D8 | 1 kΩ → NPN base (buzzer driver) |
+| A4 / A5 | Optional LCD SDA / SCL |
+| D9 | Optional servo signal (external supply) |
+
+**Voltage note:** on a 5 V Uno, 5 V-powered module analog outputs are compatible. For 3.3 V boards, do not connect 5 V outputs directly. Use 3.3 V module power or a divider, and re-calibrate.
+
+Complete pin-to-pin table, electrical checks, and diagram: [`docs/proposed_wiring.md`](docs/proposed_wiring.md)
+
+## 9. Operating Principle
+
+1. **Initialization:** lamp test, sensors initialized, MQ-2 warm-up begins (smoke channel ignored).
+2. **Monitoring:** both sensors sampled every 50 ms and smoothed.
+3. **Detection:** a channel becomes *active* when its condition persists (default 1.5 s). Flame is judged against `FLAME_THRESHOLD`; smoke against *baseline + delta*.
+4. **Pre-alarm:** one sensor active → blinking red LED and short beeps.
+5. **Alarm:** both sensors active, or one persists for 15 s → latched alarm, steady red LED, buzzer.
+6. **Simulated suppression:** after a 5 s pre-discharge delay, the amber LED turns on for 10 s (one-shot).
+7. **Reset:** hold the button 2 s or send `r`; refused while a condition remains.
+8. **Fault:** MQ-2 stuck at an extreme value for 3 s → FAULT (alternating LEDs, periodic beep).
+
+### Flame vs. smoke vs. confirmed fire
+- **Flame detection** senses IR radiation. It can be triggered by sunlight or heaters.
+- **Smoke detection** senses airborne particles or gases. It can be triggered by cooking, vapors, or humidity.
+- **A confirmed fire** requires human verification or multiple independent, reliable indications. **A single low-cost sensor reading is not proof of a fire.**
+
+## 10. Arduino Installation and Libraries
+
+1. Install the [Arduino IDE](https://www.arduino.cc/en/software).
+2. Open `src/smart_fire_detection/smart_fire_detection.ino`.
+3. Select **Tools → Board → Arduino Uno** and the correct port.
+4. **Default build requires no external libraries.**
+5. Optional features:
+   - `#define USE_LCD 1` → install **LiquidCrystal I2C** (Library Manager).
+   - `#define USE_SERVO 1` → uses the built-in **Servo** library.
+
+## 11. Source Code Instructions
+
+- File: [`src/smart_fire_detection/smart_fire_detection.ino`](src/smart_fire_detection/smart_fire_detection.ino)
+- All pin assignments are labelled **PROPOSED**; edit the constants at the top to match your wiring.
+- **Calibrate first:** adjust `FLAME_THRESHOLD`, `FLAME_ACTIVE_LOW`, and `SMOKE_DELTA_COUNTS` based on observed Serial values.
+- Serial Monitor: **9600 baud**.
+
+| Command | Action |
+|---|---|
+| `h` | Help |
+| `s` | Print status |
+| `r` | Reset latched alarm (if conditions clear) |
+| `f` | Toggle **simulated** flame |
+| `m` | Toggle **simulated** smoke |
+
+Key functions: `updateFilter()` (moving average), `debounce()` (persistence), `flameCondition()` / `smokeCondition()` (threshold + hysteresis), `checkFault()` (heuristic fault detection), `updateStateMachine()` (state transitions), `handleSuppression()` (simulated one-shot), `attemptReset()` (guarded reset), `updateOutputs()` (LED/buzzer patterns).
+
+## 12. Testing Procedure
+
+See [`docs/testing_plan.md`](docs/testing_plan.md) for the complete plan and blank results table.
+
+**Safe test without a real fire:**
+1. Upload the sketch; open Serial Monitor.
+2. Send `f` → observe PRE-ALARM; send `m` as well → observe ALARM and simulated suppression sequence.
+3. Send `f` and `m` again to turn off simulation; wait 3 s; send `r` to reset.
+4. For hardware-path tests, use only safe stimuli (phone torch/IR LED for the flame sensor; a lightly alcohol-moistened swab at a distance, in a ventilated space, for the MQ-2). **Never use open flames.**
+
+> **Test results:** none are claimed. Physical testing status: *not yet recorded*. Add your evidence (photos, Serial logs, filled tables) before making any performance statements.
+
+Troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
+
+## 13. Limitations
+
+- Not certified; no approval to any fire-detection standard.
+- Low-cost sensors have limited accuracy, drift, and cross-sensitivity.
+- Flame sensor needs line of sight and is affected by sunlight and artificial IR sources.
+- MQ-2 needs preheat and calibration; it is not a smoke-particle detector.
+- Fixed thresholds do not adapt to environment (no automatic baseline tracking).
+- Fault detection is heuristic; a disconnected sensor may not be detected.
+- No hardware watchdog; alarm latch is stored in RAM only and is lost on power failure.
+- Single microcontroller is a single point of failure; no supervised wiring or backup power.
+- The suppression output is simulated and releases nothing.
+
+## 14. Safety Precautions
+
+- Never test with real fire or flammable materials near the circuit.
+- Use only low-voltage supplies (USB/5 V) for the demonstration.
+- Do **not** connect this prototype, its GPIO pins, or an unverified relay to mains-powered equipment, pumps, pressurized systems, valves, or extinguishing agents.
+- A physical suppression actuator requires rated drivers and isolation, independent power, abort and manual override, interlocks, supervised wiring, safe agent selection, standards compliance, and professional review.
+- Keep the MQ-2 away from ignition sources; its heater becomes hot.
+- Power the servo from an external supply with common ground.
+- Always rely on certified detectors and established emergency procedures for real protection.
+
+## 15. Future Improvements
+
+- Add temperature (thermistor/DS18B20) and CO sensing for better confirmation
+- Hardware watchdog and brown-out handling
+- EEPROM event log and latch persistence
+- Adaptive baseline tracking for MQ-2
+- RTC timestamps and SD logging
+- ESP32/GSM notifications
+- Supervised sensor loops and battery backup
+- Custom PCB and enclosure
+- Unit tests for the logic using a simulated HAL
+
+## 16. Repository Structure
+
+```
+arduino-smart-fire-detection-suppression/
+├── README.md
+├── LICENSE
+├── .gitignore
+├── src/
+│   └── smart_fire_detection/
+│       └── smart_fire_detection.ino
+└── docs/
+    ├── proposed_wiring.md
+    ├── system_diagrams.md
+    ├── BOM.md
+    ├── testing_plan.md
+    ├── troubleshooting.md
+    ├── viva_questions.md
+    └── GITHUB_SETUP.md
+```
+
+## 17. Author Information
+
+- **Name:** [Your Name]
+- **Institution / Program:** [Your Institution]
+- **GitHub:** [@your-username](https://github.com/your-username)
+- **Contact:** [your-email]
+
+## 18. Disclaimer
+
+This project is provided for educational purposes only, without warranty. It is not certified, and the author accepts no responsibility for any use as a real fire-protection device.
